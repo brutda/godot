@@ -39,6 +39,7 @@
 #include "servers/rendering/renderer_rd/uniform_set_cache_rd.h"
 #include "servers/rendering/rendering_device.h"
 #include "servers/rendering/rendering_server_default.h"
+#include "servers/rendering/renderer_rd/environment/fog.h"
 
 #ifndef XR_DISABLED
 #include "servers/xr/xr_interface.h"
@@ -810,7 +811,7 @@ void RenderForwardMobile::_update_volumetric_fog(Ref<RenderSceneBuffersRD> p_ren
 		settings.max_cluster_elements = RendererRD::LightStorage::get_singleton()->get_max_cluster_elements();
 		settings.volumetric_fog_filter_active = get_volumetric_fog_filter_active();
 
-		settings.shadow_sampler = shadow_sampler;
+		settings.shadow_sampler = scene_shader.shadow_sampler;
 		settings.shadow_atlas_depth = RendererRD::LightStorage::get_singleton()->owns_shadow_atlas(p_shadow_atlas) ? RendererRD::LightStorage::get_singleton()->shadow_atlas_get_texture(p_shadow_atlas) : RID();
 		settings.voxel_gi_buffer = RID();
 		settings.omni_light_buffer = RendererRD::LightStorage::get_singleton()->get_omni_light_buffer();
@@ -831,7 +832,7 @@ void RenderForwardMobile::_update_volumetric_fog(Ref<RenderSceneBuffersRD> p_ren
 		// CRITICAL TBDR SYNC: Compute-to-Fragment Barrier
 		// Ensure that the froxel 3D textures are fully written by the compute queue
 		// before the TBDR rasterizer begins fragment shading in the opaque pass.
-		RD::get_singleton()->barrier(RD::BARRIER_MASK_COMPUTE, RD::BARRIER_MASK_RASTER);
+		RD::get_singleton()->barrier(RenderingDevice::BARRIER_MASK_COMPUTE, RenderingDevice::BARRIER_MASK_RASTER);
 	}
 }
 
