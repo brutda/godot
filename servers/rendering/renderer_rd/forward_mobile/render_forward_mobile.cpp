@@ -31,6 +31,7 @@
 #include "render_forward_mobile.h"
 
 #include "core/config/project_settings.h"
+#include "servers/rendering/renderer_rd/environment/fog.h"
 #include "servers/rendering/renderer_rd/framebuffer_cache_rd.h"
 #include "servers/rendering/renderer_rd/storage_rd/light_storage.h"
 #include "servers/rendering/renderer_rd/storage_rd/mesh_storage.h"
@@ -39,7 +40,6 @@
 #include "servers/rendering/renderer_rd/uniform_set_cache_rd.h"
 #include "servers/rendering/rendering_device.h"
 #include "servers/rendering/rendering_server_default.h"
-#include "servers/rendering/renderer_rd/environment/fog.h"
 
 #ifndef XR_DISABLED
 #include "servers/xr/xr_interface.h"
@@ -649,7 +649,7 @@ RID RenderForwardMobile::_setup_render_pass_uniform_set(RenderListType p_render_
 		u.uniform_type = RD::UNIFORM_TYPE_TEXTURE;
 		RID vfog;
 		if (rb_data.is_valid() && rb->has_custom_data(RB_SCOPE_FOG)) {
-			Ref<RendererRD::Fog::VolumetricFog> fog = rb->get_custom_data(RB_SCOPE_FOG);
+			Ref<RendererRD::Fog::VolumetricFog> fog = Object::cast_to<RendererRD::Fog::VolumetricFog>(rb->get_custom_data(RB_SCOPE_FOG).ptr());
 			vfog = fog->fog_map;
 			if (vfog.is_null()) {
 				vfog = texture_storage->texture_rd_get_default(RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_3D_WHITE);
@@ -779,7 +779,7 @@ void RenderForwardMobile::_update_volumetric_fog(Ref<RenderSceneBuffersRD> p_ren
 	uint32_t target_height = uint32_t(float(get_volumetric_fog_size()) / ratio);
 
 	if (p_render_buffers->has_custom_data(RB_SCOPE_FOG)) {
-		Ref<RendererRD::Fog::VolumetricFog> fog = p_render_buffers->get_custom_data(RB_SCOPE_FOG);
+		Ref<RendererRD::Fog::VolumetricFog> fog = Object::cast_to<RendererRD::Fog::VolumetricFog>(p_render_buffers->get_custom_data(RB_SCOPE_FOG).ptr());
 		//validate
 		if (p_environment.is_null() || !environment_get_volumetric_fog_enabled(p_environment) || fog->width != target_width || fog->height != target_height || fog->depth != get_volumetric_fog_depth()) {
 			p_render_buffers->set_custom_data(RB_SCOPE_FOG, Ref<RenderBufferCustomDataRD>());
@@ -802,7 +802,7 @@ void RenderForwardMobile::_update_volumetric_fog(Ref<RenderSceneBuffersRD> p_ren
 	}
 
 	if (p_render_buffers->has_custom_data(RB_SCOPE_FOG)) {
-		Ref<RendererRD::Fog::VolumetricFog> fog = p_render_buffers->get_custom_data(RB_SCOPE_FOG);
+		Ref<RendererRD::Fog::VolumetricFog> fog = Object::cast_to<RendererRD::Fog::VolumetricFog>(p_render_buffers->get_custom_data(RB_SCOPE_FOG).ptr());
 
 		RendererRD::Fog::VolumetricFogSettings settings;
 		settings.rb_size = size;
