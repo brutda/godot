@@ -1465,8 +1465,22 @@ void main() {
 	}
 
 #endif //!CUSTOM_FOG_USED
-
 #endif //!FOG_DISABLED
+
+	// Composite Volumetric Fog
+	// Uses Froxel Buffer via `vfog_texture` sampler
+#if !defined(FOG_DISABLED) || !defined(CUSTOM_FOG_USED)
+	if (!sc_disable_fog()) {
+		vec3 volume_uv = sc_vfog_compute_froxel_coord(vertex, scene_data_block.data.inv_projection_matrix);
+		if (volume_uv.z > 0.0) {
+			vec4 vfog_color = textureLod(sampler3D(vfog_texture, DEFAULT_SAMPLER_LINEAR_CLAMP), volume_uv, 0.0);
+			// Apply vfog over existing fog
+			fog.rgb = mix(vfog_color.rgb, fog.rgb, vfog_color.a);
+			fog.a = fog.a + vfog_color.a - (fog.a * vfog_color.a);
+		}
+	}
+#endif
+
 #endif //!MODE_RENDER_DEPTH
 
 	/////////////////////// DECALS ////////////////////////////////
