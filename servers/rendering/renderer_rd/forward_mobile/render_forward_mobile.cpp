@@ -31,6 +31,7 @@
 #include "render_forward_mobile.h"
 
 #include "core/config/project_settings.h"
+#include "servers/rendering/renderer_rd/environment/fog.h"
 #include "servers/rendering/renderer_rd/framebuffer_cache_rd.h"
 #include "servers/rendering/renderer_rd/storage_rd/light_storage.h"
 #include "servers/rendering/renderer_rd/storage_rd/mesh_storage.h"
@@ -645,6 +646,24 @@ RID RenderForwardMobile::_setup_render_pass_uniform_set(RenderListType p_render_
 	{
 		RD::Uniform u;
 		u.binding = 11;
+		u.uniform_type = RD::UNIFORM_TYPE_TEXTURE;
+		RID vfog;
+		if (rb_data.is_valid() && rb->has_custom_data(RB_SCOPE_FOG)) {
+			Ref<RendererRD::Fog::VolumetricFog> fog = Object::cast_to<RendererRD::Fog::VolumetricFog>(rb->get_custom_data(RB_SCOPE_FOG).ptr());
+			vfog = fog->fog_map;
+			if (vfog.is_null()) {
+				vfog = texture_storage->texture_rd_get_default(RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_3D_WHITE);
+			}
+		} else {
+			vfog = texture_storage->texture_rd_get_default(RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_3D_WHITE);
+		}
+		u.append_id(vfog);
+		uniforms.push_back(u);
+	}
+
+	{
+		RD::Uniform u;
+		u.binding = 12;
 		u.uniform_type = RD::UNIFORM_TYPE_SAMPLER;
 		RID sampler;
 		switch (decals_get_filter()) {
@@ -674,7 +693,7 @@ RID RenderForwardMobile::_setup_render_pass_uniform_set(RenderListType p_render_
 
 	{
 		RD::Uniform u;
-		u.binding = 12;
+		u.binding = 13;
 		u.uniform_type = RD::UNIFORM_TYPE_SAMPLER;
 		RID sampler;
 		switch (light_projectors_get_filter()) {
@@ -702,7 +721,7 @@ RID RenderForwardMobile::_setup_render_pass_uniform_set(RenderListType p_render_
 		uniforms.push_back(u);
 	}
 
-	p_samplers.append_uniforms(uniforms, 13);
+	p_samplers.append_uniforms(uniforms, 14);
 
 	return UniformSetCacheRD::get_singleton()->get_cache_vec(scene_shader.default_shader_rd, RENDER_PASS_UNIFORM_SET, uniforms);
 }
@@ -745,6 +764,75 @@ void RenderForwardMobile::_setup_lightmaps(const RenderDataRD *p_render_data, co
 	}
 	if (scene_state.lightmaps_used > 0) {
 		RD::get_singleton()->buffer_update(scene_state.lightmap_buffer, 0, sizeof(LightmapData) * scene_state.lightmaps_used, scene_state.lightmaps);
+	}
+}
+
+void RenderForwardMobile::_update_volumetric_fog(Ref<RenderSceneBuffersRD> p_render_buffers, RID p_environment, const Projection &p_cam_projection, const Transform3D &p_cam_transform, const Transform3D &p_prev_cam_inv_transform, RID p_shadow_atlas, int p_directional_light_count, bool p_use_directional_shadows, int p_positional_light_count, int p_voxel_gi_count, const PagedArray<RID> &p_fog_volumes) {
+	ERR_FAIL_COND(p_render_buffers.is_null());
+
+	Ref<RenderBufferDataForwardMobile> rb_data = p_render_buffers->get_custom_data(RB_SCOPE_MOBILE);
+	ERR_FAIL_COND(rb_data.is_null());
+
+	Size2i size = p_render_buffers->get_internal_size();
+	float ratio = float(size.x) / float((size.x + size.y) / 2);
+	uint32_t target_width = uint32_t(float(get_volumetric_fog_size()) * ratio);
+	uint32_t target_height = uint32_t(float(get_volumetric_fog_size()) / ratio);
+
+	if (p_render_buffers->has_custom_data(RB_SCOPE_FOG)) {
+		Ref<RendererRD::Fog::VolumetricFog> fog = Object::cast_to<RendererRD::Fog::VolumetricFog>(p_render_buffers->get_custom_data(RB_SCOPE_FOG).ptr());
+		//validate
+		if (p_environment.is_null() || !environment_get_volumetric_fog_enabled(p_environment) || fog->width != target_width || fog->height != target_height || fog->depth != get_volumetric_fog_depth()) {
+			p_render_buffers->set_custom_data(RB_SCOPE_FOG, Ref<RenderBufferCustomDataRD>());
+		}
+	}
+
+	if (p_environment.is_null() || !environment_get_volumetric_fog_enabled(p_environment)) {
+		//no reason to enable or update, bye
+		return;
+	}
+
+	if (p_environment.is_valid() && environment_get_volumetric_fog_enabled(p_environment) && !p_render_buffers->has_custom_data(RB_SCOPE_FOG)) {
+		//required volumetric fog but not existing, create
+		Ref<RendererRD::Fog::VolumetricFog> fog;
+
+		fog.instantiate();
+		fog->init(Vector3i(target_width, target_height, get_volumetric_fog_depth()), sky.sky_shader.default_shader_rd);
+
+		p_render_buffers->set_custom_data(RB_SCOPE_FOG, fog);
+	}
+
+	if (p_render_buffers->has_custom_data(RB_SCOPE_FOG)) {
+		Ref<RendererRD::Fog::VolumetricFog> fog = Object::cast_to<RendererRD::Fog::VolumetricFog>(p_render_buffers->get_custom_data(RB_SCOPE_FOG).ptr());
+
+		RendererRD::Fog::VolumetricFogSettings settings;
+		settings.rb_size = size;
+		settings.time = time;
+		settings.is_using_radiance_octmap_array = is_using_radiance_octmap_array();
+		settings.max_cluster_elements = RendererRD::LightStorage::get_singleton()->get_max_cluster_elements();
+		settings.volumetric_fog_filter_active = get_volumetric_fog_filter_active();
+
+		settings.shadow_sampler = scene_shader.shadow_sampler;
+		settings.shadow_atlas_depth = RendererRD::LightStorage::get_singleton()->owns_shadow_atlas(p_shadow_atlas) ? RendererRD::LightStorage::get_singleton()->shadow_atlas_get_texture(p_shadow_atlas) : RID();
+		settings.voxel_gi_buffer = RID();
+		settings.omni_light_buffer = RendererRD::LightStorage::get_singleton()->get_omni_light_buffer();
+		settings.spot_light_buffer = RendererRD::LightStorage::get_singleton()->get_spot_light_buffer();
+		settings.directional_shadow_depth = RendererRD::LightStorage::get_singleton()->directional_shadow_get_texture();
+		settings.directional_light_buffer = RendererRD::LightStorage::get_singleton()->get_directional_light_buffer();
+
+		settings.vfog = fog;
+		settings.cluster_builder = nullptr;
+		settings.rbgi = Ref<RendererRD::GI::RenderBuffersGI>();
+		settings.sdfgi = Ref<RendererRD::GI::SDFGI>();
+		settings.env = p_environment;
+		settings.sky = &sky;
+		settings.gi = &gi;
+
+		RendererRD::Fog::get_singleton()->volumetric_fog_update(settings, p_cam_projection, p_cam_transform, p_prev_cam_inv_transform, p_shadow_atlas, p_directional_light_count, p_use_directional_shadows, p_positional_light_count, p_voxel_gi_count, p_fog_volumes);
+
+		// CRITICAL TBDR SYNC: Compute-to-Fragment Barrier
+		// Ensure that the froxel 3D textures are fully written by the compute queue
+		// before the TBDR rasterizer begins fragment shading in the opaque pass.
+		RD::get_singleton()->barrier(RenderingDevice::BARRIER_MASK_COMPUTE, RenderingDevice::BARRIER_MASK_RASTER);
 	}
 }
 
@@ -803,6 +891,18 @@ void RenderForwardMobile::_pre_opaque_render(RenderDataRD *p_render_data) {
 		_render_shadow_process();
 
 		_render_shadow_end();
+	}
+
+	Ref<RenderSceneBuffersRD> rb = p_render_data->render_buffers;
+	Ref<RenderBufferDataForwardMobile> rb_data;
+	if (rb.is_valid() && rb->has_custom_data(RB_SCOPE_MOBILE)) {
+		rb_data = rb->get_custom_data(RB_SCOPE_MOBILE);
+	}
+
+	if (rb_data.is_valid()) {
+		RENDER_TIMESTAMP("Update Volumetric Fog");
+		bool directional_shadows = RendererRD::LightStorage::get_singleton()->has_directional_shadows(p_render_data->directional_light_count);
+		_update_volumetric_fog(rb, p_render_data->environment, p_render_data->scene_data->cam_projection, p_render_data->scene_data->cam_transform, p_render_data->scene_data->prev_cam_transform.affine_inverse(), p_render_data->shadow_atlas, p_render_data->directional_light_count, directional_shadows, 0, 0, *p_render_data->fog_volumes);
 	}
 }
 
@@ -3403,7 +3503,7 @@ bool RenderForwardMobile::is_dynamic_gi_supported() const {
 }
 
 bool RenderForwardMobile::is_volumetric_supported() const {
-	return false;
+	return true;
 }
 
 uint32_t RenderForwardMobile::get_max_elements() const {
